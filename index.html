@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>SM공대 분배금 계산기</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  body{background:#000;color:#fff;font-family:Arial,sans-serif;padding:20px}
+  .tabs{display:flex;margin-bottom:10px}
+  .tab{background:#222;padding:8px 12px;margin-right:4px;border-radius:6px 6px 0 0;cursor:pointer;display:flex;align-items:center}
+  .tab.active{background:#444;font-weight:bold}
+  .tab span{flex-grow:1}
+  .tab button{background:none;border:none;color:#fff;cursor:pointer;font-size:14px;margin-left:6px}
+  .tab-content{display:none}
+  .tab-content.active{display:block}
+  .container{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  .card{background:#111;padding:20px;border-radius:12px;box-shadow:0 0 10px rgba(255,255,255,.1);margin-bottom:20px}
+  h2{margin-bottom:10px}
+  input{margin:5px;padding:6px;background:#222;color:#fff;border:1px solid #444;border-radius:6px}
+  label{margin-right:10px}
+  .btn{margin:5px;padding:6px 10px;background:#444;color:#fff;border:none;border-radius:6px;cursor:pointer}
+  .btn:hover{background:#666}
+  table{width:100%;border-collapse:collapse;margin-top:10px}
+  th,td{border:1px solid #444;padding:6px;text-align:center}
+  th{background:#222}
+  .amt-neg{color:#ff4d4f}
+  .amt-pos{color:#9ae6b4}
+  #status{margin:10px 0 20px;color:#9ae6b4}
+  .item-list{text-align:left;margin-bottom:10px}
+  .muted{color:#aaa;font-size:12px}
+</style>
+</head>
+<body>
+<h1>SM공대 분배금 계산기</h1>
+
+<div id="auth">
+  <input type="email" id="email" placeholder="이메일" />
+  <input type="password" id="password" placeholder="비밀번호" />
+  <button class="btn" onclick="signUp()">회원가입</button>
+  <button class="btn" onclick="signIn()">로그인</button>
+  <button class="btn" onclick="signOut()">로그아웃</button>
+  <div id="status">상태: 로그아웃됨 (조회 전용)</div>
+</div>
+
+<div class="tabs" id="tabs"></div>
+<div id="tabContents"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+// ===== 설정 (교체) =====
+const SUPABASE_URL="https://bjjigbjhyzriytcmamed.supabase.co";
+const SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJqamlnYmpoeXpyaXl0Y21hbWVkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc5NDU1MzAsImV4cCI6MjA3MzUyMTUzMH0.PZnyIXcqgxAY1soicOamtLD1ytqdg-emk-whTdLZdfw";
+const ADMIN_EMAIL="hgy0018@naver.com";
+
+// ===== Supabase =====
+const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
+
+// ===== 전역 상태 =====
+let tabCount=0,currentTab=null,isAdmin=false;
+const statusEl=document.getElementById("status");
+function setStatus(msg,admin=false){statusEl.textContent=msg;statusEl.style.color=admin?"#63b3ed":"#9ae6b4"}
+
+// ===== Auth =====
+async function signUp(){
+  const email=document.getElementById("email").value;
+  const password=document.getElementById("password").value;
+  const {error}=await supabase.auth.signUp({email,password});
+  if(error) alert(error.message); else alert("회원가입 완료");
+}
+async function signIn(){
+  const email=document.getElementById("email").value;
+  const password=document.getElementById("password").value;
+  const {data,error}=await supabase.auth.signInWithPassword({email,password});
+  if(error){alert(error.message);return}
+  const user=data.user;
+  if(user && user.email===ADMIN_EMAIL){isAdmin=true;setStatus(`상태: 관리자 (${user.email})`,true);alert("관리자 로그인 성공")}
+  else if(user){isAdmin=false;setStatus(`상태: 일반 사용자 (${user.email}) - 조회 전용`);alert("일반 사용자 로그인")}
+}
+async function signOut(){await supabase.auth.signOut();isAdmin=false;setStatus("상태: 로그아웃됨 (조회 전용)");alert("로그아웃 완료")}
+
+// ===== 유틸 =====
+function formatNumber(n){try{return (Math.round(n)).toLocaleString('ko-KR')}catch(e){return n}}
+
+// ===== Tabs / UI =====
+function createTab(name=`계산기${tabCount+1}`){if(!isAdmin){alert("관리자만 새로운 탭을 만들 수 있습니다");return}createTabInternal(name,true)}
+function createTabInitial(){createTabInternal("계산기1",false)}
+function createTabInternal(name,showClose){
+  tabCount++;const tabId="tab"+tabCount;
+  const tabBtn=document.createElement("div");tabBtn.className="tab";tabBtn.dataset.tab=tabId;
+  const titleSpan=document.createElement("span");titleSpan.textContent=name;tabBtn.appendChild(titleSpan);
+  if(showClose){const closeBtn=document.createElement("button");closeBtn.textContent="×";closeBtn.onclick=(e)=>{e.stopPropagation();deleteTab(tabId)};tabBtn.appendChild(closeBtn)}
+  tabBtn.onclick=()=>openTab(tabId);
+  document.getElementById("tabs").insertBefore(tabBtn,document.getElementById("addTabBtn"));
+  const tabContent=document.createElement("div");tabContent.id=tabId;tabContent.className="tab-content";tabContent.innerHTML=getCalculatorHTML(tabId);
+  document.getElementById("tabContents").appendChild(tabContent);openTab(tabId);
+}
+function deleteTab(tabId){if(!isAdmin){alert("관리자만 탭을 삭제할 수 있습니다");return}document.querySelector('.tab[data-tab="'+tabId+'"]')?.remove();document.getElementById(tabId)?.remove();const firstTab=document.querySelector(".tab");if(firstTab&&firstTab.id!=="addTabBtn")openTab(firstTab.dataset.tab);else currentTab=null}
+function openTab(tabId){document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));document.querySelectorAll(".tab-content").forEach(c=>c.classList.remove("active"));const tabBtn=document.querySelector('.tab[data-tab="'+tabId+'"]');const tabContent=document.getElementById(tabId);if(tabBtn&&tabContent){tabBtn.classList.add("active");tabContent.classList.add("active");currentTab=tabId}}
+function getCalculatorHTML(tabId){
+  return `
+  <div class="card">
+    <h2>획득 아이템 & 판매 금액</h2>
+    <div id="items_${tabId}"></div>
+    <button class="btn" onclick="addItemRow('${tabId}')">아이템 추가</button>
+    <button class="btn" onclick="saveTab('${tabId}', getParticipants('${tabId}'), getItems('${tabId}'))">DB 저장</button>
+    <button class="btn" onclick="loadTab('${tabId}')">DB 불러오기</button>
+    <div class="muted">* 저장/불러오기는 관리자만 가능</div>
+  </div>
+  <div class="container">
+    <div class="card">
+      <h2>참여자 입력</h2>
+      <div id="participants_${tabId}"></div>
+      <button class="btn" onclick="addRow('${tabId}')">참여자 추가</button>
+      <button class="btn" onclick="updateResults('${tabId}')">계산하기</button>
+    </div>
+    <div class="card">
+      <h2>분배 결과</h2>
+      <div id="results_${tabId}"></div>
+    </div>
+  </div>`;
+}
+
+// ===== Participants & Items =====
+function getParticipants(tabId){
+  const rows=document.querySelectorAll('#participants_'+tabId+' > div');const players=[];
+  rows.forEach(row=>{const inputs=row.querySelectorAll('input');
+    if(inputs[0]&&inputs[0].value.trim()!==""){players.push({name:inputs[0].value.trim(),deaths:[parseInt(inputs[1].value)||0,parseInt(inputs[2].value)||0,parseInt(inputs[3].value)||0],extra:parseInt(inputs[4].value)||0,incentive:parseInt(inputs[5].value)||0})}});
+  return players;
+}
+function getItems(tabId){
+  const rows=document.querySelectorAll('#items_'+tabId+' > div');const items=[];
+  rows.forEach(row=>{const inputs=row.querySelectorAll('input');if(inputs[0]&&inputs[0].value.trim()!==""){items.push({name:inputs[0].value.trim(),amount:parseInt(inputs[1].value)||0})}});
+  return items;
+}
+function addRow(tabId){
+  const row=document.createElement('div');row.innerHTML=`
+    <input type="text" placeholder="이름">
+    <label>1페<input type="number" min="0" max="3" value="0"></label>
+    <label>2페<input type="number" min="0" max="3" value="0"></label>
+    <label>3페<input type="number" min="0" max="3" value="0"></label>
+    <label>추가 차감<input type="number" min="0" max="10" value="0"></label>
+    <label>인센티브<input type="number" value="0"></label>`;
+  const btn=document.createElement('button');btn.textContent="삭제";btn.className="btn";btn.onclick=()=>{row.remove();updateResults(tabId)};row.appendChild(btn);
+  document.getElementById('participants_'+tabId).appendChild(row);
+}
+function addRowWithData(tabId,p){
+  const row=document.createElement('div');row.innerHTML=`
+    <input type="text" placeholder="이름" value="${p.name||""}">
+    <label>1페<input type="number" min="0" max="3" value="${(p.deaths?.[0]??0)}"></label>
+    <label>2페<input type="number" min="0" max="3" value="${(p.deaths?.[1]??0)}"></label>
+    <label>3페<input type="number" min="0" max="3" value="${(p.deaths?.[2]??0)}"></label>
+    <label>추가 차감<input type="number" min="0" max="10" value="${(p.extra??0)}"></label>
+    <label>인센티브<input type="number" value="${(p.incentive??0)}"></label>`;
+  const btn=document.createElement('button');btn.textContent="삭제";btn.className="btn";btn.onclick=()=>{row.remove();updateResults(tabId)};row.appendChild(btn);
+  document.getElementById('participants_'+tabId).appendChild(row);
+}
+function addItemRow(tabId){
+  const row=document.createElement('div');row.innerHTML=`<input type="text" placeholder="아이템 이름"><input type="number" placeholder="판매 금액">`;
+  const btn=document.createElement('button');btn.textContent="삭제";btn.className="btn";btn.onclick=()=>{row.remove();updateResults(tabId)};row.appendChild(btn);
+  document.getElementById('items_'+tabId).appendChild(row);
+}
+function addItemRowWithData(tabId,i){
+  const row=document.createElement('div');row.innerHTML=`<input type="text" placeholder="아이템 이름" value="${i.name||""}"><input type="number" placeholder="판매 금액" value="${i.amount??0}">`;
+  const btn=document.createElement('button');btn.textContent="삭제";btn.className="btn";btn.onclick=()=>{row.remove();updateResults(tabId)};row.appendChild(btn);
+  document.getElementById('items_'+tabId).appendChild(row);
+}
+
+// ===== 계산 =====
+function calculateShares(total,players){
+  if(players.length===0) return [];
+  const totalIncentives=players.reduce((s,p)=>s+(p.incentive||0),0);
+  const distributable=total-totalIncentives;
+  const base=distributable/players.length;
+  let results=[],totalDeducted=0;
+  players.forEach(p=>{
+    let penalty=1-0.3*p.deaths[0]-0.3*p.deaths[1]-0.2*p.deaths[2]-0.1*p.extra;
+    if(penalty<0) penalty=0;
+    let share=base*penalty;
+    let deducted=base-share;
+    totalDeducted+=deducted;
+    results.push({name:p.name,base,penalty,share,deducted,incentive:p.incentive||0});
+  });
+  const bonusTargets=results.filter(r=>r.deducted===0);
+  const bonus=bonusTargets.length>0? totalDeducted/bonusTargets.length : 0;
+  return results.map(r=>({...r,finalShare:r.share+(r.deducted===0?bonus:0)+r.incentive,bonus:(r.deducted===0?bonus:0)}));
+}
+function updateResults(tabId){
+  const players=getParticipants(tabId),items=getItems(tabId);
+  const results=document.getElementById('results_'+tabId);
+  if(players.length===0||items.length===0){results.textContent="참여자와 아이템 입력";return}
+  const total=items.reduce((s,i)=>s+i.amount,0);
+  const totalIncentives=players.reduce((s,p)=>s+(p.incentive||0),0);
+  const distributable=total-totalIncentives;
+  const calc=calculateShares(total,players);
+  const totalShare=calc.reduce((s,p)=>s+p.finalShare,0);
+  const totalDeducted=calc.reduce((s,p)=>s+p.deducted,0);
+  const totalBonus=calc.reduce((s,p)=>s+p.bonus,0);
+  const shareTable=`<table>
+    <tr><th>이름</th><th>기본분배</th><th>차감율</th><th>차감액</th><th>보너스</th><th>인센티브</th><th>최종분배</th></tr>
+    ${calc.map(p=>`
+      <tr>
+        <td>${p.name}</td>
+        <td>${formatNumber(p.base)}</td>
+        <td>${((1-p.penalty)*100).toFixed(1)}%</td>
+        <td class="amt-neg">${formatNumber(p.deducted)}</td>
+        <td>${formatNumber(p.bonus)}</td>
+        <td>${formatNumber(p.incentive)}</td>
+        <td>${formatNumber(p.finalShare)}</td>
+      </tr>`).join("")}
+  </table>`;
+  const itemList=`<div class="item-list"><strong>아이템별 금액:</strong><br>${
+    items.map(i=> i.amount<0? `<span class="amt-neg">- ${i.name} ${formatNumber(Math.abs(i.amount))}</span>` : `<span class="amt-pos">+ ${i.name} ${formatNumber(i.amount)}</span>`).join("<br>")
+  }</div>`;
+  results.innerHTML = itemList +
+    `<p>총 판매금액: ${formatNumber(total)}</p>`+
+    `<p>총 인센티브: ${formatNumber(totalIncentives)}</p>`+
+    `<p>분배가능 금액: ${formatNumber(distributable)}</p>`+
+    `<p>총 차감액: ${formatNumber(totalDeducted)}</p>`+
+    `<p>총 보너스 지급액: ${formatNumber(totalBonus)}</p>`+
+    shareTable+
+    `<p>총 분배액(인센티브 포함): ${formatNumber(totalShare)}</p>`;
+}
+
+// ===== DB 저장/불러오기 =====
+async function saveTab(tabId,participants,items){
+  if(!isAdmin){alert("관리자만 저장 가능합니다");return}
+  const {error}=await supabase.from("tabs").upsert({id:tabId,participants:JSON.stringify(participants),items:JSON.stringify(items),updated_at:new Date()});
+  if(error) alert(error.message); else alert("저장 성공 (DB)");
+}
+async function loadTab(tabId){
+  const {data,error}=await supabase.from("tabs").select("*").eq("id",tabId).single();
+  if(error){alert(error.message);return}
+  const rec=data,participants=JSON.parse(rec.participants||"[]"),items=JSON.parse(rec.items||"[]");
+  document.getElementById('participants_'+tabId).innerHTML="";document.getElementById('items_'+tabId).innerHTML="";
+  participants.forEach(p=>addRowWithData(tabId,p));items.forEach(i=>addItemRowWithData(tabId,i));
+  updateResults(tabId);alert("DB 불러오기 완료");
+}
+
+// ===== 부트스트랩 =====
+window.addEventListener('load',()=>{
+  const tabsDiv=document.getElementById("tabs");const addBtn=document.createElement("div");
+  addBtn.id="addTabBtn";addBtn.className="tab";addBtn.textContent="+";addBtn.title="관리자만 탭 추가 가능";addBtn.onclick=()=>createTab();
+  tabsDiv.appendChild(addBtn);createTabInitial();
+});
+</script>
+</body>
+</html>
